@@ -22,7 +22,7 @@ The tool uses the following libraries:
 Please make sure these libraries are installed before running the script, there is a requirements.txt filee you can use.
 ### Usage
 
-To run the script, open a terminal, navigate to the directory where the script is located, and enter python scriptname.py.
+To run the script, open a terminal, navigate to the directory where the script is located, and enter python main.py.
 
 Once the script is running, enter the date and time range for which you want to retrieve weather data and click on the "Retrieve Data" button. The average temperature for the selected date and time range will be displayed.
 
