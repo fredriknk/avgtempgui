@@ -8,8 +8,9 @@ from requests.auth import HTTPBasicAuth
 from tkinter import ttk
 import json
 import webbrowser
+import re
 
-
+location ="SN17850" #Ås
 def make_client_id():
     def on_link_click(event):
         webbrowser.open_new("https://frost.met.no/howto.html")
@@ -110,13 +111,13 @@ def grad_date_time():
         output_text.config(text=f"The average temperature for the selected date and time is: {avg_temp:.3f}")
 
 
-def get_weather_data_average(api_key, location, from_date, to_date):
+def get_weather_data_average(client_id, location, from_date, to_date):
     """Retrieves the weather data from the Met.no API for the given location and date and time range"""
     start_date = from_date.strftime("%Y-%m-%dT%H")
     end_date = to_date.strftime("%Y-%m-%dT%H")
     url = f"https://frost.met.no/observations/v0.jsonld?sources={location}&elements=air_temperature,wind_speed,precipitation_amount&referencetime={start_date}/{end_date}"
     try:
-        response = requests.get(url, auth=HTTPBasicAuth(api_key, ''))
+        response = requests.get(url, auth=HTTPBasicAuth(client_id, ''))
         if response.status_code != 200:
             raise ValueError(f"Error {response.status_code}: {response.reason}")
         data = response.json()
@@ -131,92 +132,133 @@ def get_weather_data_average(api_key, location, from_date, to_date):
         return None
 
 
-def on_select_station(event):
-    """Handles the event when a weather station is selected from the list"""
-    w = event.widget
-    index = int(w.curselection()[0])
-    value = w.get(index)
-    print(value)
-    station_id, station_name, station_type = value.split("   |   ")
-    location_label.config(text=station_id)
-    location_label_name.config(text=station_name)
 
-
-def put_to_clipboard(value):
-    root = tk.Tk()
-    root.withdraw()
-    root.clipboard_clear()
-    root.clipboard_append(value)
-    root.update()
-    root.destroy()
-
-
-def search_stations():
-    """Searches for weather stations by municipality and displays the results in a list"""
-    municipality = municipality_entry.get()
-    if not municipality:
-        messagebox.showerror("Error", "Please enter a municipality name.")
-        return
+def get_weather_data(client_id, location, from_date=datetime.now()-timedelta(days=2), to_date=datetime.now()-timedelta(days=1)):
+    """Retrieves the weather data from the Met.no API for the given location and date and time range"""
+    start_date = from_date.strftime("%Y-%m-%dT%H")
+    end_date = to_date.strftime("%Y-%m-%dT%H")
+    url = f"https://frost.met.no/observations/v0.jsonld?sources={location}&elements=precipitation_amount&referencetime={start_date}/{end_date}"
     try:
-        stations = get_weather_stations(client_id, municipality)
+        response = requests.get(url, auth=HTTPBasicAuth(client_id, ''))
+        if response.status_code != 200:
+            raise ValueError(f"Error {response.status_code}: {response.reason}")
+        data = response.json()
+        return data
     except Exception as e:
-        messagebox.showerror("Error", f"An error occurred while searching for weather stations: {e}")
-        return
-
-    if not stations:
-        messagebox.showerror("Error", f"No weather stations found for municipality {municipality}.")
-        return
-
-    station_list.delete(0, tk.END)
-
-    for station in stations:
-        station_list.insert(tk.END, f"{station['id']}   |   {station['name']}   |   ({station['@type']})")
+        print("Error", f"An error occurred while retrieving weather data: {e}")
+        messagebox.showerror("Error", f"An error occurred while retrieving weather data: {e}")
+        return None
 
 
-def get_weather_stations(api_key, municipality):
+
+def get_available_elements(client_id):
+    """Retrieve the metadata about Frost API elements"""
+    url = "https://frost.met.no/elements/v0.jsonld"
+    try:
+        response = requests.get(url, auth=HTTPBasicAuth(client_id, ''))
+        if response.status_code != 200:
+            raise ValueError(f"Error {response.status_code}: {response.reason}")
+        elements = response.json()
+        return [element['id'] for element in elements['data']]
+    except Exception as e:
+        print("Error", f"An error occurred while retrieving elements: {e}")
+        return None
+
+
+def get_weather_stations(client_id, municipality):
     """Retrieves the list of weather stations from the Met.no API for the given municipality"""
     url = f'https://frost.met.no/sources/v0.jsonld?municipality={municipality}'
-    response = requests.get(url, auth=HTTPBasicAuth(api_key, ''))
+    response = requests.get(url, auth=HTTPBasicAuth(client_id, ''))
     data = json.loads(response.text)
     return data['data']
 
-# GUI code here
-root = tk.Tk()
+def get_elements_at_location(client_id, location):
+    """Retrieve the available elements at a specific location using the Frost API"""
+    # Get sources (stations) at the location
+    url_sources = f"https://frost.met.no/sources/v0.jsonld?geometry={location}"
+    try:
+        response_sources = requests.get(url_sources, auth=HTTPBasicAuth(client_id, ''))
+        response_sources.raise_for_status()
+        sources = response_sources.json()
 
-location_label = tk.Label(root)
-location_label.grid(row=1, column=0, padx=10, pady=10)
-location_label.config(text=location)
+        # Extract the source IDs
+        source_ids = [source['id'] for source in sources['data']]
 
-location_label_name = tk.Label(root)
-location_label_name.grid(row=1, column=1, padx=10, pady=10)
-location_label_name.config(text=location_name)
+        # Get the elements for each source
+        elements = set()
+        for source_id in source_ids:
+            url_elements = f"https://frost.met.no/observations/availableTimeSeries/v0.jsonld?sources={source_id}"
+            response_elements = requests.get(url_elements, auth=HTTPBasicAuth(client_id, ''))
+            response_elements.raise_for_status()
+            elements_data = response_elements.json()
+            for element in elements_data['data']:
+                elements.add(element['elementId'])
 
-startdate = datetime.today() - timedelta(days=2)
-cal = Calendar(root, selectmode='day', year=startdate.year, month=startdate.month, day=startdate.day)
-cal.grid(row=1, column=0, rowspan=3,columnspan = 2, padx=10, pady=10)
+        return list(elements)
 
-time_selector = tk.ttk.Combobox(root, values=[f"{i:02d}:00" for i in range(24)])
-time_selector.grid(row=1, column=3, padx=10, pady=10)
-time_selector.current(11)
+    except Exception as e:
+        print("Error", f"An error occurred while retrieving elements at location: {e}")
+        return None
 
-time_selector_to = tk.ttk.Combobox(root, values=[f"{i:02d}:00" for i in range(24)])
-time_selector_to.grid(row=1, column=4, padx=10, pady=10)
-time_selector_to.current(14)
+def get_elements_at_location(client_id, location):
+    """Retrieve the available elements at a specific location using the Frost API"""
+    url_elements = f"https://frost.met.no/observations/availableTimeSeries/v0.jsonld?sources={location}"
+    try:
+        response_elements = requests.get(url_elements, auth=HTTPBasicAuth(client_id, ''))
+        response_elements.raise_for_status()
+        elements_data = response_elements.json()
+        elements = [element['elementId'] for element in elements_data['data']]
+        return elements, elements_data
+    except Exception as e:
+        print("Error", f"An error occurred while retrieving elements at location: {e}")
+        return None
 
-municipality_entry = tk.Entry(root)
-municipality_entry.grid(row=2, column=3, padx=10, pady=10)
 
-search_button = tk.Button(root, text="Search", command=search_stations)
-search_button.grid(row=2, column=4, padx=10, pady=10)
 
-station_list = tk.Listbox(root, width=50)
-station_list.grid(row=3, column=3, columnspan=2, padx=10, pady=10)
-station_list.bind('<<ListboxSelect>>', on_select_station)
+def get_request(client_id, url):
+    """
+    Retrieves the weather data for the given elements, location, and date and time range
+    from the Met.no API
+    """
+    try:
+        response = requests.get(url, auth=HTTPBasicAuth(client_id, ''))
+        response.raise_for_status()
+        data = response.json()
+        return data
+    except Exception as e:
+        print("Error", f"An error occurred while retrieving weather data: {e}")
+        return None
+def replace_referencetime(url, from_date, to_date):
+    new_referencetime = f"&referencetime={from_date}/{to_date}"
+    return re.sub(r'&referencetime=[^&]*', new_referencetime, url)
 
-search_button = tk.Button(root, text="Get avgtemp", command=grad_date_time)
-search_button.grid(row=5, column=0, padx=10, pady=10)
+elements = ["air_temperature","air_pressure_at_sea_level","min(air_temperature PT1H)","max(air_temperature PT1H)","dew_point_temperature PT1H","specific_humidity PT1H","min(grass_temperature PT1H","mean(volume_fraction_of_water_in_soil PT1H)","wind_speed PT1H","max(wind_speed PT1H)","precipitation_amount P1D"]
+elements = ["sum(precipitation_amount PT1H)","relative_humidity","air_temperature"]
+# Example usage:
+# elements,data = get_available_elements(client_id)
+#print(elements)
+# elements2,avaliable = get_elements_at_location(client_id,location)
+#print(elements2)
 
-output_text = tk.Label(root)
-output_text.grid(row=6, column=0,columnspan=4, padx=10, pady=10)
+url = "https://frost.met.no/observations/v0.jsonld?sources=SN17850&referencetime=2023-01-04T12%3A00%3A00.000Z&elements=water_vapor_partial_pressure_in_air"
 
-root.mainloop()
+from_date = "2023-04-01T12%3A00%3A00.000Z"
+to_date = "2023-04-08T12%3A00%3A00.000Z"
+
+url = "https://frost.met.no/observations/v0.jsonld?sources=SN17850:0&referencetime=1944-05-01T00:00:00.000Z/9999-12-31T23:59:59Z&elements=mean(water_vapor_partial_pressure_in_air P1D)&timeoffsets=PT0H&timeresolutions=P1D&timeseriesids=0&performancecategories=C&exposurecategories=2"
+data = get_weather(client_id,replace_referencetime(url, from_date, to_date))
+
+url =  "uri": "https://frost.met.no/observations/v0.jsonld?sources=SN17850:0&referencetime=2015-09-21T00:00:00.000Z/9999-12-31T23:59:59Z&elements=mean(air_temperature P1D)&timeoffsets=PT0H&timeresolutions=P1D&timeseriesids=0&performancecategories=C&exposurecategories=1&levels=2.0"
+data = get_weather(client_id,replace_referencetime(url, from_date, to_date))
+
+url = "https://frost.met.no/observations/v0.jsonld?sources=SN17850:0&referencetime=2015-09-21T00:00:00.000Z/9999-12-31T23:59:59Z&elements=mean(relative_humidity P1D)&timeoffsets=PT0H&timeresolutions=P1D&timeseriesids=0&performancecategories=C&exposurecategories=1&levels=2.0"
+data = get_weather(client_id,replace_referencetime(url, from_date, to_date))
+
+url = "uri": "https://frost.met.no/observations/v0.jsonld?sources=SN17850:0&referencetime=2020-12-02T00:00:00.000Z/9999-12-31T23:59:59Z&elements=mean(soil_temperature P1D)&timeoffsets=PT0H&timeresolutions=P1D&timeseriesids=0&performancecategories=C&exposurecategories=2&levels=10.0"
+data = get_weather(client_id,replace_referencetime(url, from_date, to_date))
+
+for type in data["data"]:
+    print(type["elementId"] )
+    print("\n")
+    if not 'validTo' in type.keys():
+        print(type["elementId"])
