@@ -1,3 +1,5 @@
+import pandas as pd
+from datetime import datetime
 import tkinter as tk
 from tkinter import messagebox
 from tkcalendar import Calendar
@@ -9,6 +11,7 @@ from tkinter import ttk
 import json
 import webbrowser
 import re
+import openpyxl
 
 location ="SN17850" #Ås
 def make_client_id():
@@ -46,14 +49,15 @@ def make_client_id():
     root2.mainloop()
 
 path = os.path.dirname(os.path.abspath(__file__))  # path of this file
-
-try:
-    id_file = os.path.join(path, 'metno_client_id.txt')
-    with open(id_file, 'r') as f:
-        client_id = f.read().strip()
-except FileNotFoundError:
-    print(id_file + ' not found, create one')
-    client_id = make_client_id()
+client_id = None
+while client_id == None:
+    try:
+        id_file = os.path.join(path, 'metno_client_id.txt')
+        with open(id_file, 'r') as f:
+            client_id = f.read().strip()
+    except FileNotFoundError:
+        print(id_file + ' not found, create one')
+        make_client_id()
 
 location = "SN17850"
 location_name = "Ås"
@@ -64,15 +68,15 @@ def make_client_id():
         webbrowser.open_new("https://frost.met.no/")
 
     def on_create_file():
+        global client_id
         client_id = client_id_entry.get()
         if not client_id:
             messagebox.showerror("Error", "Please enter a client ID.")
-            return
 
         with open("metno_client_id_2.txt", "w") as f:
             f.write(client_id)
         messagebox.showinfo("Success", "File created successfully.")
-        root.destroy()
+        root2.destroy()
 
     root2 = tk.Tk()
     root2.title("Metno Client ID")
@@ -228,37 +232,79 @@ def get_request(client_id, url):
     except Exception as e:
         print("Error", f"An error occurred while retrieving weather data: {e}")
         return None
+
 def replace_referencetime(url, from_date, to_date):
     new_referencetime = f"&referencetime={from_date}/{to_date}"
     return re.sub(r'&referencetime=[^&]*', new_referencetime, url)
 
-elements = ["air_temperature","air_pressure_at_sea_level","min(air_temperature PT1H)","max(air_temperature PT1H)","dew_point_temperature PT1H","specific_humidity PT1H","min(grass_temperature PT1H","mean(volume_fraction_of_water_in_soil PT1H)","wind_speed PT1H","max(wind_speed PT1H)","precipitation_amount P1D"]
-elements = ["sum(precipitation_amount PT1H)","relative_humidity","air_temperature"]
-# Example usage:
-# elements,data = get_available_elements(client_id)
-#print(elements)
-# elements2,avaliable = get_elements_at_location(client_id,location)
-#print(elements2)
 
-url = "https://frost.met.no/observations/v0.jsonld?sources=SN17850&referencetime=2023-01-04T12%3A00%3A00.000Z&elements=water_vapor_partial_pressure_in_air"
+import pandas as pd
+from datetime import datetime
+
+
+def append_to_dataframe(existing_df, data):
+    # Extracting the 'data' field
+    observations = data['data']
+
+    # Initializing a list to store the new data
+    rows = []
+
+    # Iterating through each observation
+    for observation in observations:
+        reference_time = observation['referenceTime']
+        reference_time = datetime.strptime(reference_time, '%Y-%m-%dT%H:%M:%S.%fZ')  # Converting to datetime
+        row_data = {'referenceTime': reference_time}
+
+        # Iterating through each element in the 'observations' field
+        for element in observation['observations']:
+            element_id = element['elementId']
+            value = element['value']
+            unit = element['unit']
+            column_name = f"{element_id} ({unit})"
+            row_data[column_name] = value
+
+        # Appending the new row
+        rows.append(row_data)
+
+    # Creating the new DataFrame
+    new_df = pd.DataFrame(rows).set_index('referenceTime')
+
+    # Concatenating with the existing DataFrame
+    final_df = pd.concat([existing_df, new_df]).groupby(level=0).last()
+
+    return final_df
+
+def export_to_excel(df, filename):
+    # Using ExcelWriter to create an Excel file
+    with pd.ExcelWriter(filename) as writer:
+        # Writing the DataFrame to the Excel file
+        df.to_excel(writer)
+
+# Example usage:
+df = pd.DataFrame(index=pd.to_datetime([])) # An existing DataFrame (can have data already)
 
 from_date = "2023-04-01T12%3A00%3A00.000Z"
-to_date = "2023-04-08T12%3A00%3A00.000Z"
+to_date = "2023-8-08T12%3A00%3A00.000Z"
+
+elements2,avaliable = get_elements_at_location(client_id,location)
+print(avaliable)
 
 url = "https://frost.met.no/observations/v0.jsonld?sources=SN17850:0&referencetime=1944-05-01T00:00:00.000Z/9999-12-31T23:59:59Z&elements=mean(water_vapor_partial_pressure_in_air P1D)&timeoffsets=PT0H&timeresolutions=P1D&timeseriesids=0&performancecategories=C&exposurecategories=2"
-data = get_weather(client_id,replace_referencetime(url, from_date, to_date))
-
-url =  "uri": "https://frost.met.no/observations/v0.jsonld?sources=SN17850:0&referencetime=2015-09-21T00:00:00.000Z/9999-12-31T23:59:59Z&elements=mean(air_temperature P1D)&timeoffsets=PT0H&timeresolutions=P1D&timeseriesids=0&performancecategories=C&exposurecategories=1&levels=2.0"
-data = get_weather(client_id,replace_referencetime(url, from_date, to_date))
-
+data = get_request(client_id,replace_referencetime(url, from_date, to_date))
+df = append_to_dataframe(df, data)
+url =  "https://frost.met.no/observations/v0.jsonld?sources=SN17850:0&referencetime=2015-09-21T00:00:00.000Z/9999-12-31T23:59:59Z&elements=mean(air_temperature P1D)&timeoffsets=PT0H&timeresolutions=P1D&timeseriesids=0&performancecategories=C&exposurecategories=1&levels=2.0"
+data = get_request(client_id,replace_referencetime(url, from_date, to_date))
+df = append_to_dataframe(df, data)
 url = "https://frost.met.no/observations/v0.jsonld?sources=SN17850:0&referencetime=2015-09-21T00:00:00.000Z/9999-12-31T23:59:59Z&elements=mean(relative_humidity P1D)&timeoffsets=PT0H&timeresolutions=P1D&timeseriesids=0&performancecategories=C&exposurecategories=1&levels=2.0"
-data = get_weather(client_id,replace_referencetime(url, from_date, to_date))
+data = get_request(client_id,replace_referencetime(url, from_date, to_date))
+df = append_to_dataframe(df, data)
+url = "https://frost.met.no/observations/v0.jsonld?sources=SN17850:0&referencetime=2020-12-02T00:00:00.000Z/9999-12-31T23:59:59Z&elements=mean(soil_temperature P1D)&timeoffsets=PT0H&timeresolutions=P1D&timeseriesids=0&performancecategories=C&exposurecategories=2&levels=10.0"
+data = get_request(client_id,replace_referencetime(url, from_date, to_date))
+url = 'https://frost.met.no/observations/v0.jsonld?sources=SN17850:0&referencetime=1874-01-01T00:00:00.000Z/9999-12-31T23:59:59Z&elements=sum(precipitation_amount P1D)&timeoffsets=PT6H&timeresolutions=P1D&timeseriesids=0&performancecategories=C&exposurecategories=2'
+data = get_request(client_id,replace_referencetime(url, from_date, to_date))
+df = append_to_dataframe(df, data)
 
-url = "uri": "https://frost.met.no/observations/v0.jsonld?sources=SN17850:0&referencetime=2020-12-02T00:00:00.000Z/9999-12-31T23:59:59Z&elements=mean(soil_temperature P1D)&timeoffsets=PT0H&timeresolutions=P1D&timeseriesids=0&performancecategories=C&exposurecategories=2&levels=10.0"
-data = get_weather(client_id,replace_referencetime(url, from_date, to_date))
 
-for type in data["data"]:
-    print(type["elementId"] )
-    print("\n")
-    if not 'validTo' in type.keys():
-        print(type["elementId"])
+
+# Exporting the final DataFrame to an Excel file
+export_to_excel(df, 'output.xlsx')
